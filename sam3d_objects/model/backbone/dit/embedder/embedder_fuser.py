@@ -204,6 +204,8 @@ class EmbedderFuser(torch.nn.Module):
         tokens = []
         kwarg_names = []
         
+        import ipdb; ipdb.set_trace()
+        
         for i, (condition_embedder, kwargs_info) in enumerate(self.embedder_list):
             # Ideally, we would batch the inputs; but that assumes same-sized inputs
             for kwarg_name, pos_group in kwargs_info:

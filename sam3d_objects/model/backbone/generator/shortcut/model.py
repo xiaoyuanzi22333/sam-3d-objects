@@ -15,6 +15,8 @@ from torch.nn.attention import SDPBackend, sdpa_kernel
 from torch._utils import _flatten_dense_tensors, _unflatten_dense_tensors
 import copy
 
+from sam3d_objects.model.backbone.generator.flow_matching.solver import Euler
+
 
 # https://arxiv.org/pdf/2410.12557
 class ShortCut(FlowMatching):
@@ -419,6 +421,8 @@ class ShortCut(FlowMatching):
         **kwargs_conditionals,
     ):
         """Generate samples using shortcut model"""
+        # {'6drotation_normalized': (1, 1, 6), 'scale': (1, 1, 3), 'shape': (1, 4096, 8), 'translation': (1, 1, 3), 'translation_scale': (1, 1, 1)}
+        # 这里每个按照shape创建一个noise tensor
         x_0 = self._generate_noise(x_shape, x_device)
         t_seq, d = self._prepare_t_and_d()
 
@@ -427,8 +431,8 @@ class ShortCut(FlowMatching):
             x_0,
             t_seq,
             d,
-            *args_conditionals,
-            **kwargs_conditionals,
+            *args_conditionals, # torch.Size([1, 7528, 1024])
+            **kwargs_conditionals,  # None
         ):
             yield t, x_t, ()
 

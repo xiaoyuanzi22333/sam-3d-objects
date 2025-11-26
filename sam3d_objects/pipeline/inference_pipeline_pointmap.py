@@ -21,7 +21,9 @@ from sam3d_objects.data.dataset.tdfy.transforms_3d import (
 )
 from sam3d_objects.pipeline.utils.pointmap import infer_intrinsics_from_pointmap
 from sam3d_objects.pipeline.inference_utils import o3d_plane_estimation, estimate_plane_area
+from sam3d_objects.model.backbone.tdfy_dit.modules.sparse import SparseTensor
 
+import open3d as o3d
 
 def camera_to_pytorch3d_camera(device="cpu") -> DecomposedTransform:
     """
@@ -335,20 +337,38 @@ class InferencePipelinePointMap(InferencePipeline):
         with self.device: 
             pointmap_dict = self.compute_pointmap(image, pointmap)
             pointmap = pointmap_dict["pointmap"]
-            pts = type(self)._down_sample_img(pointmap)
+            pts = type(self)._down_sample_img(pointmap)  # 4x downsampled pointmap
             pts_colors = type(self)._down_sample_img(pointmap_dict["pts_color"])
+            
+            # #### debug for pointmap
+            # pts = pts.permute(1, 2, 0).cpu().numpy().reshape(-1, 3)
+            # pts_colors = pts_colors.permute(1, 2, 0).cpu().numpy().reshape(-1, 3)
+            # pointmap_o3d = o3d.geometry.PointCloud()
+            # pointmap_o3d.points = o3d.utility.Vector3dVector(pts)
+            # pointmap_o3d.colors = o3d.utility.Vector3dVector(pts_colors)
+            # o3d.io.write_point_cloud("pointmap.ply", pointmap_o3d)
+            # #### debug for pointmap
+            
 
             if estimate_plane:
                 return self.estimate_plane(pointmap_dict, image)
-
-            ss_input_dict = self.preprocess_image(
+            
+            
+            # ss_input_dict: dict_keys(['mask', 'image'(obj crop), 'rgb_image'(global), 'rgb_image_mask', 'pointmap', 
+            # 'rgb_pointmap', 'pointmap_scale', 'pointmap_shift', 'rgb_pointmap_scale', 'rgb_pointmap_shift'])
+            ss_input_dict = self.preprocess_image(  # 这里同时用了pointmap和image进行加载数据
                 image, self.ss_preprocessor, pointmap=pointmap
             )
-
-            slat_input_dict = self.preprocess_image(image, self.slat_preprocessor)
+            
+            # slat_input_dict: dict_keys(['mask', 'image', 'rgb_image', 'rgb_image_mask'])
+            slat_input_dict = self.preprocess_image(image, self.slat_preprocessor)  # PreProcessor
+            
             if seed is not None:
                 torch.manual_seed(seed)
-            ss_return_dict = self.sample_sparse_structure(
+                
+                
+            # ss_return_dict: dict_keys(['6drotation_normalized', 'scale', 'shape', 'translation', 'translation_scale', 'coords_original', 'coords', 'downsample_factor'])
+            ss_return_dict = self.sample_sparse_structure(  
                 ss_input_dict,
                 inference_steps=stage1_inference_steps,
                 use_distillation=use_stage1_distillation,
@@ -358,7 +378,7 @@ class InferencePipelinePointMap(InferencePipeline):
             pointmap_scale = ss_input_dict.get("pointmap_scale", None)
             pointmap_shift = ss_input_dict.get("pointmap_shift", None)
             ss_return_dict.update(
-                self.pose_decoder(
+                self.pose_decoder(  # add keys: dict_keys(['translation', 'rotation', 'scale'])
                     ss_return_dict,
                     scene_scale=pointmap_scale,
                     scene_shift=pointmap_shift,
@@ -370,26 +390,26 @@ class InferencePipelinePointMap(InferencePipeline):
 
             if stage1_only:
                 logger.info("Finished!")
-                ss_return_dict["voxel"] = ss_return_dict["coords"][:, 1:] / 64 - 0.5
-                return {
+                ss_return_dict["voxel"] = ss_return_dict["coords"][:, 1:] / 64 - 0.5    # 26338 voxels (518*518=268224 64*64*64=262144)
+                return { 
                     **ss_return_dict,
-                    "pointmap": pts.cpu().permute((1, 2, 0)),  # HxWx3
+                    "pointmap": pts.cpu().permute((1, 2, 0)),  # HxWx3  # 1120 * 1680 = 1881600 points
                     "pointmap_colors": pts_colors.cpu().permute((1, 2, 0)),  # HxWx3
                 }
                 # return ss_return_dict
 
             coords = ss_return_dict["coords"]
-            slat = self.sample_slat(
+            slat: SparseTensor = self.sample_slat(    # SparseConvTensor
                 slat_input_dict,
                 coords,
                 inference_steps=stage2_inference_steps,
                 use_distillation=use_stage2_distillation,
             )
-            outputs = self.decode_slat(
+            outputs = self.decode_slat( # dict_keys(['mesh', 'gaussian'])   # 842816 gaussians
                 slat, self.decode_formats if decode_formats is None else decode_formats
             )
-            outputs = self.postprocess_slat_output(
-                outputs, with_mesh_postprocess, with_texture_baking, use_vertex_color
+            outputs = self.postprocess_slat_output( # dict_keys(['mesh', 'gaussian', 'glb', 'gs'])   # 842816 gaussians
+                outputs, with_mesh_postprocess, with_texture_baking, use_vertex_color # (False, False, True)
             )
             glb = outputs.get("glb", None)
 

@@ -1,12 +1,16 @@
 import sys
+from sam3d_objects.model.backbone.tdfy_dit.representations.gaussian.gaussian_model import Gaussian
 
 # import inference code
 sys.path.append("notebook")
-from inference import Inference, load_image, load_single_mask
+try:
+    from inference import Inference, load_image, load_single_mask
+except ImportError:
+    from .notebook.inference import Inference, load_image, load_single_mask
 
 # load model
 tag = "hf"
-config_path = f"checkpoints/{tag}/pipeline.yaml"
+config_path = f"/mnt/data2/yiming/sam3d_ckpt/sam-3d-objects/checkpoints/pipeline.yaml"
 inference = Inference(config_path, compile=False)
 
 # load image (RGBA only, mask is embedded in the alpha channel)

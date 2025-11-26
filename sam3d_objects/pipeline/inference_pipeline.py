@@ -7,6 +7,10 @@ from loguru import logger
 from functools import wraps
 from torch.utils._pytree import tree_map_only
 
+from sam3d_objects.model.backbone.dit.embedder.embedder_fuser import EmbedderFuser
+from sam3d_objects.model.backbone.generator.shortcut.model import ShortCut
+from sam3d_objects.model.backbone.tdfy_dit.models.sparse_structure_vae import SparseStructureDecoderTdfyWrapper
+
 
 def set_attention_backend():
     if torch.cuda.is_available():
@@ -153,10 +157,10 @@ class InferencePipeline:
             )
 
             # Load conditioner embedder so that we only load it once
-            ss_condition_embedder = self.init_ss_condition_embedder(
+            ss_condition_embedder: EmbedderFuser = self.init_ss_condition_embedder(
                 ss_generator_config_path, ss_generator_ckpt_path
             )
-            slat_condition_embedder = self.init_slat_condition_embedder(
+            slat_condition_embedder: EmbedderFuser = self.init_slat_condition_embedder(
                 slat_generator_config_path, slat_generator_ckpt_path
             )
 
@@ -617,13 +621,13 @@ class InferencePipeline:
     def is_mm_dit(self, model_name="ss_generator"):
         return hasattr(self.models[model_name].reverse_fn.backbone, "latent_mapping")
 
-    def embed_condition(self, condition_embedder, *args, **kwargs):
+    def embed_condition(self, condition_embedder: EmbedderFuser, *args, **kwargs):
         if condition_embedder is not None:
             tokens = condition_embedder(*args, **kwargs)
             return tokens, None, None
         return None, args, kwargs
 
-    def get_condition_input(self, condition_embedder, input_dict, input_mapping):
+    def get_condition_input(self, condition_embedder: EmbedderFuser, input_dict, input_mapping):
         condition_args = self.map_input_keys(input_dict, input_mapping)
         condition_kwargs = {
             k: v for k, v in input_dict.items() if k not in input_mapping
@@ -642,18 +646,20 @@ class InferencePipeline:
     def sample_sparse_structure(
         self, ss_input_dict: dict, inference_steps=None, use_distillation=False
     ):
-        ss_generator = self.models["ss_generator"]
-        ss_decoder = self.models["ss_decoder"]
-        if use_distillation:
+        ss_generator: ShortCut = self.models["ss_generator"]
+        ss_decoder: SparseStructureDecoderTdfyWrapper = self.models["ss_decoder"]
+        
+        
+        if use_distillation:    # False
             ss_generator.no_shortcut = False
             ss_generator.reverse_fn.strength = 0
             ss_generator.reverse_fn.strength_pm = 0
         else:
             ss_generator.no_shortcut = True
-            ss_generator.reverse_fn.strength = self.ss_cfg_strength
-            ss_generator.reverse_fn.strength_pm = self.ss_cfg_strength_pm
+            ss_generator.reverse_fn.strength = self.ss_cfg_strength  # 7    
+            ss_generator.reverse_fn.strength_pm = self.ss_cfg_strength_pm  # 0.0
 
-        prev_inference_steps = ss_generator.inference_steps
+        prev_inference_steps = ss_generator.inference_steps  # 25
         if inference_steps:
             ss_generator.inference_steps = inference_steps
 
@@ -670,7 +676,9 @@ class InferencePipeline:
 
         with torch.no_grad():
             with torch.autocast(device_type="cuda", dtype=self.shape_model_dtype):
-                if self.is_mm_dit():
+                if self.is_mm_dit():    # True
+                    # {'6drotation_normalized': (1, 1, 6), 'scale': (1, 1, 3), 
+                    # 'shape': (1, 4096, 8), 'translation': (1, 1, 3), 'translation_scale': (1, 1, 1)}
                     latent_shape_dict = {
                         k: (bs,) + (v.pos_emb.shape[0], v.input_layer.in_features)
                         for k, v in ss_generator.reverse_fn.backbone.latent_mapping.items()
@@ -678,6 +686,7 @@ class InferencePipeline:
                 else:
                     latent_shape_dict = (bs,) + (4096, 8)
 
+                # [1, 7528, 1024] , None
                 condition_args, condition_kwargs = self.get_condition_input(
                     self.condition_embedders["ss_condition_embedder"],
                     ss_input_dict,

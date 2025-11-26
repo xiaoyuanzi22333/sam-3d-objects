@@ -1,5 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
-from typing import Callable, Sequence, Union
+from typing import Callable, Sequence, Union, Tuple
 import torch
 import numpy as np
 from functools import partial
@@ -73,9 +73,10 @@ class FlowMatching(Base):
         self.rescale_t = rescale_t
         self.loss_fn = loss_fn
         self.loss_weights = loss_weights
-        self._solver_method, self._solver = self._get_solver(
+        solver_result: Tuple[str, Euler] = self._get_solver(
             solver_method, solver_kwargs
         )
+        self._solver_method, self._solver = solver_result
 
     def _get_solver(self, solver_method, solver_kwargs):
         if solver_method in FlowMatching.SOLVER_METHODS:
